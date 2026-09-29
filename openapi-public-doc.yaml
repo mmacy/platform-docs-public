@@ -717,7 +717,7 @@ paths:
   /v1/audio/speech:
     post:
       operationId: speech_v1_audio_speech_post
-      summary: Speech
+      summary: Generate speech
       tags:
         - audio.speech
       requestBody:
@@ -725,10 +725,53 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/SpeechRequest'
+            examples:
+              presetVoice:
+                summary: Speak with a preset voice, by slug
+                value:
+                  model: voxtral-mini-tts-2603
+                  input: Your order has shipped and should arrive on Thursday.
+                  voice_id: en_paul_neutral
+                  response_format: wav
+              referenceAudio:
+                summary: Clone a voice from reference audio (truncated)
+                value:
+                  model: voxtral-mini-tts-2603
+                  input: This speech will sound like the voice in the reference audio.
+                  ref_audio: UklGRvIkCwBXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAA...
+                  response_format: mp3
+              streamPcm:
+                summary: Stream raw PCM, with a voice ID
+                value:
+                  model: voxtral-mini-tts-latest
+                  input: Your order has shipped and should arrive on Thursday.
+                  voice_id: c69964a6-ab8b-4f8a-9465-ec0925096ec8
+                  response_format: pcm
+                  stream: true
         required: true
       responses:
         '200':
-          description: Speech audio data.
+          description: |-
+            The generated speech. With `stream` set to `false`, the body is JSON that holds the whole clip in `audio_data`. With `stream` set to `true`, the body is a stream of server-sent events.
+          headers:
+            x-ratelimit-limit-input-characters-minute:
+              description: The number of `input` characters you can send per minute.
+              schema:
+                type: integer
+                examples:
+                  - 12000
+            x-ratelimit-remaining-input-characters-minute:
+              description: The number of `input` characters you have left in the current minute.
+              schema:
+                type: integer
+                examples:
+                  - 11947
+            x-ratelimit-input-characters-query-cost:
+              description: The number of characters this request counted against the limit. It's the length of `input`. Reference audio doesn't count.
+              schema:
+                type: integer
+                examples:
+                  - 53
           content:
             application/json:
               schema:
@@ -737,27 +780,43 @@ paths:
                   audio_data:
                     type: string
                     title: Audio Data
-                    description: Base64 encoded audio data
+                    description: |-
+                      The whole clip, base64-encoded, in the format that `response_format` set. Decode it and write the bytes to a file. The example is truncated.
+                    contentEncoding: base64
+                    examples:
+                      - UklGRiSzAQBXQVZFZm10IBAAAAABAAEAwF0AAIC7AAACABAA...
                 title: SpeechResponse
+                description: The generated speech, returned when `stream` is `false`.
                 required:
                   - audio_data
                 additionalProperties: false
+              examples:
+                wav:
+                  summary: A WAV clip (truncated)
+                  value:
+                    audio_data: UklGRiSzAQBXQVZFZm10IBAAAAABAAEAwF0AAIC7AAACABAA...
             text/event-stream:
               schema:
                 type: object
                 properties:
                   event:
-                    $ref: '#/$defs/SpeechStreamEventTypes'
+                    $ref: '#/paths/~1v1~1audio~1speech/post/responses/200/content/text~1event-stream/schema/$defs/SpeechStreamEventTypes'
+                    description: The event type. It matches `data.type`.
+                    examples:
+                      - speech.audio.delta
                   data:
                     oneOf:
-                      - $ref: '#/$defs/SpeechStreamAudioDelta'
-                      - $ref: '#/$defs/SpeechStreamDone'
+                      - $ref: '#/paths/~1v1~1audio~1speech/post/responses/200/content/text~1event-stream/schema/$defs/SpeechStreamAudioDelta'
+                      - $ref: '#/paths/~1v1~1audio~1speech/post/responses/200/content/text~1event-stream/schema/$defs/SpeechStreamDone'
                     discriminator:
                       propertyName: type
                       mapping:
-                        speech.audio.delta: '#/$defs/SpeechStreamAudioDelta'
-                        speech.audio.done: '#/$defs/SpeechStreamDone'
+                        speech.audio.delta: '#/paths/~1v1~1audio~1speech/post/responses/200/content/text~1event-stream/schema/$defs/SpeechStreamAudioDelta'
+                        speech.audio.done: '#/paths/~1v1~1audio~1speech/post/responses/200/content/text~1event-stream/schema/$defs/SpeechStreamDone'
                     title: Data
+                    description: The event's payload. A `speech.audio.delta` event carries a chunk of audio. The `speech.audio.done` event carries the request's token usage.
+                description: |-
+                  One server-sent event. On the wire, each event is an `event:` line with the event type and a `data:` line with the payload as JSON. The stream sends `speech.audio.delta` events in order, then one `speech.audio.done` event, and then closes.
                 $defs:
                   CompletionTokensDetails:
                     type: object
@@ -773,7 +832,7 @@ paths:
                     type: object
                     properties:
                       role:
-                        $ref: '#/$defs/Roles'
+                        $ref: '#/paths/~1v1~1audio~1speech/post/responses/200/content/text~1event-stream/schema/$defs/Roles'
                       total_tokens:
                         anyOf:
                           - type: integer
@@ -803,7 +862,7 @@ paths:
                       messages:
                         type: array
                         items:
-                          $ref: '#/$defs/MessageTokens'
+                          $ref: '#/paths/~1v1~1audio~1speech/post/responses/200/content/text~1event-stream/schema/$defs/MessageTokens'
                         title: Messages
                       cached_tokens:
                         type: integer
@@ -832,11 +891,20 @@ paths:
                         title: Type
                         default: speech.audio.delta
                         const: speech.audio.delta
+                        description: Always `speech.audio.delta`.
                       audio_data:
                         type: string
                         title: Audio Data
+                        description: |-
+                          The chunk's audio, base64-encoded. Chunk sizes vary. The example is truncated.
+                        contentEncoding: base64
+                        examples:
+                          - AAC0OAAACjkAAB05AADzOAAADjkAAAw5...
                     title: SpeechStreamAudioDelta
+                    description: |-
+                      A chunk of the generated audio. Decode each chunk's `audio_data` from base64 and append the bytes, in the order the events arrive. Together, the chunks form the whole clip in the format that `response_format` set.
                     required:
+                      - type
                       - audio_data
                     additionalProperties: false
                   SpeechStreamDone:
@@ -847,15 +915,20 @@ paths:
                         title: Type
                         default: speech.audio.done
                         const: speech.audio.done
+                        description: Always `speech.audio.done`.
                       usage:
-                        $ref: '#/$defs/UsageInfo'
+                        $ref: '#/paths/~1v1~1audio~1speech/post/responses/200/content/text~1event-stream/schema/$defs/UsageInfo'
+                        description: Token usage for the whole request.
                     title: SpeechStreamDone
+                    description: The last event in the stream. It reports the request's token usage. No audio follows it.
                     required:
+                      - type
                       - usage
                     additionalProperties: false
                   SpeechStreamEventTypes:
                     type: string
                     title: SpeechStreamEventTypes
+                    description: The type of a speech stream event.
                     enum:
                       - speech.audio.delta
                       - speech.audio.done
@@ -867,62 +940,193 @@ paths:
                           - type: integer
                           - type: 'null'
                         title: Prompt Audio Seconds
+                        description: For speech, this is `null`.
                       prompt_tokens:
                         type: integer
                         title: Prompt Tokens
                         default: 0
+                        description: |-
+                          The number of tokens the model read for this request. Reference audio in `ref_audio` adds about 12.5 tokens per second of audio.
+                        examples:
+                          - 120
                       total_tokens:
                         type: integer
                         title: Total Tokens
                         default: 0
+                        description: The sum of `prompt_tokens` and `completion_tokens`.
+                        examples:
+                          - 61560
                       completion_tokens:
                         anyOf:
                           - type: integer
                           - type: 'null'
                         title: Completion Tokens
                         default: 0
+                        description: |-
+                          The number of audio samples generated. The output has 24,000 samples per second, so divide by 24,000 to get the clip's length in seconds.
+                        examples:
+                          - 61440
                       request_count:
                         anyOf:
                           - type: integer
                           - type: 'null'
                         title: Request Count
+                        description: For speech, this is `null`.
                       prompt_tokens_details:
                         anyOf:
-                          - $ref: '#/$defs/PromptTokensDetails'
+                          - $ref: '#/paths/~1v1~1audio~1speech/post/responses/200/content/text~1event-stream/schema/$defs/PromptTokensDetails'
                           - type: 'null'
+                        description: For speech, this is `null`.
                       completion_tokens_details:
                         anyOf:
-                          - $ref: '#/$defs/CompletionTokensDetails'
+                          - $ref: '#/paths/~1v1~1audio~1speech/post/responses/200/content/text~1event-stream/schema/$defs/CompletionTokensDetails'
                           - type: 'null'
+                        description: For speech, this is `null`.
                       service_tier:
                         anyOf:
                           - type: string
                           - type: 'null'
                         title: Service Tier
-                        description: 'The service tier at which the request was processed: standard or priority.'
+                        description: 'The service tier at which the request was processed: standard or priority. For speech, this is `null`.'
                       prompt_token_details:
                         anyOf:
-                          - $ref: '#/$defs/PromptTokensDetails'
+                          - $ref: '#/paths/~1v1~1audio~1speech/post/responses/200/content/text~1event-stream/schema/$defs/PromptTokensDetails'
                           - type: 'null'
+                        description: For speech, this is `null`.
                       num_cached_tokens:
                         anyOf:
                           - type: integer
                           - type: 'null'
                         title: Num Cached Tokens
+                        description: Speech responses leave this field out.
                     title: UsageInfo
+                    description: Token usage for a speech request.
                     additionalProperties: false
                 title: SpeechStreamEvents
                 required:
                   - event
                   - data
                 additionalProperties: false
-        '422':
-          description: Validation Error
+              examples:
+                audioDelta:
+                  summary: A chunk of audio (truncated)
+                  value:
+                    event: speech.audio.delta
+                    data:
+                      type: speech.audio.delta
+                      audio_data: AAC0OAAACjkAAB05AADzOAAADjkAAAw5...
+                done:
+                  summary: The last event, with usage
+                  value:
+                    event: speech.audio.done
+                    data:
+                      type: speech.audio.done
+                      usage:
+                        prompt_audio_seconds: null
+                        prompt_tokens: 120
+                        total_tokens: 61560
+                        completion_tokens: 61440
+                        request_count: null
+                        prompt_tokens_details: null
+                        completion_tokens_details: null
+                        service_tier: null
+                        prompt_token_details: null
+        '400':
+          description: |-
+            Bad request. For example, the request has neither `voice_id` nor `ref_audio`.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-      description: Speech
+                type: object
+                properties:
+                  object:
+                    type: string
+                    description: Always `error`.
+                  message:
+                    type: string
+                    description: What went wrong.
+                  type:
+                    type: string
+                    description: The error type.
+                  param:
+                    anyOf:
+                      - type: string
+                      - type: 'null'
+                  code:
+                    anyOf:
+                      - type: string
+                      - type: 'null'
+                  raw_status_code:
+                    type: integer
+                    description: The HTTP status code.
+              examples:
+                noVoice:
+                  summary: No voice
+                  value:
+                    object: error
+                    message: Either ref_audio or voice must be provided.
+                    type: invalid_request_error
+                    param: null
+                    code: null
+                    raw_status_code: 400
+        '403':
+          description: |-
+            The `input` text failed content moderation. Change the text and try again.
+        '422':
+          description: |-
+            The request is invalid. A request without `model`, or with `model` set to `null`, returns the error object shown in the `missingModel` example.
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - $ref: '#/components/schemas/HTTPValidationError'
+                  - type: object
+                    properties:
+                      object:
+                        type: string
+                        description: Always `error`.
+                      message:
+                        type: string
+                        description: What went wrong.
+                      type:
+                        type: string
+                        description: The error type.
+                      param:
+                        anyOf:
+                          - type: string
+                          - type: 'null'
+                      code:
+                        anyOf:
+                          - type: string
+                          - type: 'null'
+                      raw_status_code:
+                        type: integer
+                        description: The HTTP status code.
+              examples:
+                missingModel:
+                  summary: No model
+                  value:
+                    object: error
+                    message: No model provided for speech.
+                    type: invalid_model
+                    param: null
+                    code: '1500'
+                    raw_status_code: 422
+      description: |-
+        Generates speech from text with Voxtral TTS. Set `model` to `voxtral-mini-tts-2603`, or to its alias `voxtral-mini-tts-latest`.
+
+        Choose the voice in one of two ways:
+
+        - **A saved voice.** Set `voice_id` to a preset voice or to one of your custom voices. To find a preset, call [List voices](https://docs.mistral.ai/api/endpoint/audio/voices#operation-list_voices_v1_audio_voices_get) with `type=preset`. To save a custom voice, call [Create a voice](https://docs.mistral.ai/api/endpoint/audio/voices#operation-create_voice_v1_audio_voices_post), which needs a paid plan.
+        - **Reference audio.** Send a short recording of the voice, base64-encoded, in `ref_audio`. The API clones the voice for this request only and doesn't save it.
+
+        A request with neither returns `400`.
+
+        With `stream` set to `false`, the default, you get one JSON response when the whole clip is ready. Decode its `audio_data` from base64 to get the audio file. With `stream` set to `true`, you get server-sent events as the audio is generated: `speech.audio.delta` events that each carry a chunk, then one `speech.audio.done` event with the token usage. For the lowest time to first audio, stream with `response_format` set to `pcm`.
+
+        The `input` text counts toward a per-minute limit on input characters. Reference audio doesn't count. JSON responses report the limit in `x-ratelimit-*` headers. The API moderates `input` and rejects some text with `403`.
+
+        For request examples in Python, TypeScript, and cURL, and for tips on writing `input`, see the [speech generation guide](https://docs.mistral.ai/studio/audio/text_to_speech/speech).
   /v1/models:
     get:
       operationId: list_models_v1_models_get
@@ -8127,35 +8331,44 @@ paths:
   /v1/audio/voices:
     get:
       operationId: list_voices_v1_audio_voices_get
-      summary: List all voices
-      description: Offset pagination will not be supported anymore. Use GET /v2/audio/voices instead.
+      summary: List voices
+      description: |-
+        Lists preset voices and your custom voices, one page at a time. Use it to find a voice for [Generate speech](https://docs.mistral.ai/api/endpoint/audio/speech#operation-speech_v1_audio_speech_post): pass a voice's `id`, or a preset's `slug`, as `voice_id`. Preset voices cover the languages `en_us`, `en_gb`, and `fr_fr`.
+
+        To get the next page, add `limit` to `offset`. The response's `total` and `total_pages` tell you when to stop.
+
+        This operation is deprecated, and its sunset date is 2027-03-31. Use `GET /v2/audio/voices` instead. That endpoint isn't in this OpenAPI description yet. It pages with a cursor (`page_size`, `page_token`, and `next_page_token`) instead of `limit` and `offset`. It can also filter by `type`, `gender`, `language`, and name, with `query`.
       tags:
         - audio.voices
       parameters:
         - name: limit
           in: query
-          description: Maximum number of voices to return
+          description: The maximum number of voices to return, from 1 to 100. Defaults to 10.
           required: false
           schema:
             type: integer
             title: Limit
             maximum: 100
             minimum: 1
-            description: Maximum number of voices to return
+            description: The maximum number of voices to return, from 1 to 100. Defaults to 10.
             default: 10
+            examples:
+              - 2
         - name: offset
           in: query
-          description: Offset for pagination
+          description: The number of voices to skip before the first one returned. Defaults to 0. For the next page, add `limit` to `offset`.
           required: false
           schema:
             type: integer
             title: Offset
             minimum: 0
-            description: Offset for pagination
+            description: The number of voices to skip before the first one returned. Defaults to 0. For the next page, add `limit` to `offset`.
             default: 0
+            examples:
+              - 2
         - name: type
           in: query
-          description: Filter the voices between customs and presets
+          description: Which voices to list. `preset` lists Mistral's preset voices, `custom` lists your custom voices, and `all` lists both. Defaults to `all`.
           required: false
           schema:
             type: string
@@ -8164,15 +8377,66 @@ paths:
               - all
               - custom
               - preset
-            description: Filter the voices between customs and presets
+            description: Which voices to list. `preset` lists Mistral's preset voices, `custom` lists your custom voices, and `all` lists both. Defaults to `all`.
             default: all
+            examples:
+              - preset
       responses:
         '200':
-          description: Successful Response
+          description: One page of voices.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/VoiceListResponse'
+              examples:
+                presetsPageOne:
+                  summary: The first page of presets, with limit=2
+                  value:
+                    items:
+                      - name: Paul - Sad
+                        slug: en_paul_sad
+                        languages:
+                          - en_us
+                        gender: male
+                        age: 30
+                        tags:
+                          - heavy
+                          - hushed
+                          - sad
+                        color: '#2A2A40'
+                        description: null
+                        appearance: null
+                        retention_notice: 30
+                        id: 530e2e20-58e2-45d8-b0a5-4594f4915944
+                        created_at: '2026-03-24T15:31:20.417434Z'
+                        user_id: null
+                        sharing_scope: global
+                        trimmed_seconds: null
+                        type: preset
+                      - name: Paul - Neutral
+                        slug: en_paul_neutral
+                        languages:
+                          - en_us
+                        gender: male
+                        age: 30
+                        tags:
+                          - relaxed
+                          - balanced
+                          - neutral
+                        color: '#77778B'
+                        description: null
+                        appearance: null
+                        retention_notice: 30
+                        id: c69964a6-ab8b-4f8a-9465-ec0925096ec8
+                        created_at: '2026-03-24T15:31:20.081769Z'
+                        user_id: null
+                        sharing_scope: global
+                        trimmed_seconds: null
+                        type: preset
+                    total: 30
+                    page: 1
+                    page_size: 2
+                    total_pages: 15
         '422':
           description: Validation Error
           content:
@@ -8186,8 +8450,15 @@ paths:
       x-sunset-date: '2027-03-31'
     post:
       operationId: create_voice_v1_audio_voices_post
-      summary: Create a new voice
-      description: Create a new voice with a base64-encoded audio sample
+      summary: Create a voice
+      description: |-
+        Saves a recording as a custom voice that you can reuse. Pass the new voice's `id` as `voice_id` to [Generate speech](https://docs.mistral.ai/api/endpoint/audio/speech#operation-speech_v1_audio_speech_post), instead of sending `ref_audio` with every request.
+
+        Custom voices need an active paid plan. Without one, this operation returns `403`. To clone a voice for a single request without saving it, send the recording as `ref_audio` to [Generate speech](https://docs.mistral.ai/api/endpoint/audio/speech#operation-speech_v1_audio_speech_post) instead.
+
+        Send the recording base64-encoded in `sample_audio`, and give the voice a `name`. You need the speaker's explicit consent to clone their voice. See the usage policy in the [voices guide](https://docs.mistral.ai/studio/audio/text_to_speech/voices).
+
+        To check the new voice, call [Get a voice](https://docs.mistral.ai/api/endpoint/audio/voices#operation-get_voice_v1_audio_voices_voice_id_get). To change its details, call [Update a voice](https://docs.mistral.ai/api/endpoint/audio/voices#operation-update_voice_v1_audio_voices_voice_id_patch). To remove it, call [Delete a custom voice](https://docs.mistral.ai/api/endpoint/audio/voices#operation-delete_voice_v1_audio_voices_voice_id_delete).
       tags:
         - audio.voices
       requestBody:
@@ -8198,11 +8469,28 @@ paths:
         required: true
       responses:
         '200':
-          description: Successful Response
+          description: The new voice.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/VoiceResponse'
+        '403':
+          description: The API refused the request. For example, your plan doesn't include custom voices.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  detail:
+                    type: string
+                    description: Why the API refused the request.
+                required:
+                  - detail
+              examples:
+                paidPlanRequired:
+                  summary: No paid plan
+                  value:
+                    detail: Custom voices require an active paid plan.
         '422':
           description: Validation Error
           content:
@@ -8213,20 +8501,25 @@ paths:
     delete:
       operationId: delete_voice_v1_audio_voices__voice_id__delete
       summary: Delete a custom voice
-      description: Delete a custom voice
+      description: |-
+        Permanently deletes one of your custom voices. After you delete a voice, speech requests that use its `voice_id` fail. The response is the deleted voice.
+
+        To keep a voice and change its details instead, call [Update a voice](https://docs.mistral.ai/api/endpoint/audio/voices#operation-update_voice_v1_audio_voices_voice_id_patch).
       tags:
         - audio.voices
       parameters:
         - name: voice_id
           in: path
+          description: The `id` of the custom voice to delete, from [Create a voice](https://docs.mistral.ai/api/endpoint/audio/voices#operation-create_voice_v1_audio_voices_post) or from [List voices](https://docs.mistral.ai/api/endpoint/audio/voices#operation-list_voices_v1_audio_voices_get) with `type=custom`.
           required: true
           schema:
             type: string
             title: Voice Id
             format: uuid
+            description: The `id` of the custom voice to delete, from [Create a voice](https://docs.mistral.ai/api/endpoint/audio/voices#operation-create_voice_v1_audio_voices_post) or from [List voices](https://docs.mistral.ai/api/endpoint/audio/voices#operation-list_voices_v1_audio_voices_get) with `type=custom`.
       responses:
         '200':
-          description: Successful Response
+          description: The deleted voice.
           content:
             application/json:
               schema:
@@ -8239,18 +8532,23 @@ paths:
                 $ref: '#/components/schemas/HTTPValidationError'
     patch:
       operationId: update_voice_v1_audio_voices__voice_id__patch
-      summary: Update voice metadata
-      description: Update voice metadata (name, gender, languages, age, tags).
+      summary: Update a voice
+      description: |-
+        Changes the details of one of your custom voices: `name`, `languages`, `gender`, `age`, `tags`, and `description`. Only the fields you send change. This operation doesn't change the voice's audio sample. The response is the updated voice.
+
+        To use a different recording, create a new voice with [Create a voice](https://docs.mistral.ai/api/endpoint/audio/voices#operation-create_voice_v1_audio_voices_post).
       tags:
         - audio.voices
       parameters:
         - name: voice_id
           in: path
+          description: The `id` of the custom voice to update, from [Create a voice](https://docs.mistral.ai/api/endpoint/audio/voices#operation-create_voice_v1_audio_voices_post) or from [List voices](https://docs.mistral.ai/api/endpoint/audio/voices#operation-list_voices_v1_audio_voices_get) with `type=custom`.
           required: true
           schema:
             type: string
             title: Voice Id
             format: uuid
+            description: The `id` of the custom voice to update, from [Create a voice](https://docs.mistral.ai/api/endpoint/audio/voices#operation-create_voice_v1_audio_voices_post) or from [List voices](https://docs.mistral.ai/api/endpoint/audio/voices#operation-list_voices_v1_audio_voices_get) with `type=custom`.
       requestBody:
         content:
           application/json:
@@ -8259,7 +8557,7 @@ paths:
         required: true
       responses:
         '200':
-          description: Successful Response
+          description: The updated voice.
           content:
             application/json:
               schema:
@@ -8272,24 +8570,56 @@ paths:
                 $ref: '#/components/schemas/HTTPValidationError'
     get:
       operationId: get_voice_v1_audio_voices__voice_id__get
-      summary: Get voice details
-      description: Get voice details (excluding sample)
+      summary: Get a voice
+      description: |-
+        Returns one voice's details, without its audio sample. Use it to check a voice's `name`, `languages`, and `tags` before you pass it as `voice_id` to [Generate speech](https://docs.mistral.ai/api/endpoint/audio/speech#operation-speech_v1_audio_speech_post).
+
+        To download the voice's audio sample, call [Get a voice's audio sample](https://docs.mistral.ai/api/endpoint/audio/voices#operation-get_voice_sample_audio_v1_audio_voices_voice_id_sample_get). To find voices, call [List voices](https://docs.mistral.ai/api/endpoint/audio/voices#operation-list_voices_v1_audio_voices_get).
       tags:
         - audio.voices
       parameters:
         - name: voice_id
           in: path
+          description: The voice's `id`. For a preset, you can pass its `slug` instead.
           required: true
           schema:
             type: string
             title: Voice Id
+            description: The voice's `id`. For a preset, you can pass its `slug` instead.
+            examples:
+              - en_paul_neutral
+              - c69964a6-ab8b-4f8a-9465-ec0925096ec8
       responses:
         '200':
-          description: Successful Response
+          description: The voice.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/VoiceResponse'
+              examples:
+                preset:
+                  summary: A preset voice
+                  value:
+                    name: Paul - Neutral
+                    slug: en_paul_neutral
+                    languages:
+                      - en_us
+                    gender: male
+                    age: 30
+                    tags:
+                      - relaxed
+                      - balanced
+                      - neutral
+                    color: '#77778B'
+                    description: null
+                    appearance: null
+                    retention_notice: 30
+                    id: c69964a6-ab8b-4f8a-9465-ec0925096ec8
+                    created_at: '2026-03-24T15:31:20.081769Z'
+                    user_id: null
+                    sharing_scope: global
+                    trimmed_seconds: null
+                    type: preset
         '422':
           description: Validation Error
           content:
@@ -8299,20 +8629,28 @@ paths:
   /v1/audio/voices/{voice_id}/sample:
     get:
       operationId: get_voice_sample_audio_v1_audio_voices__voice_id__sample_get
-      summary: Get voice sample audio
-      description: Get the audio sample for a voice
+      summary: Get a voice's audio sample
+      description: |-
+        Downloads the recording that a voice was made from, as raw audio bytes. For a custom voice, it's the recording you sent to [Create a voice](https://docs.mistral.ai/api/endpoint/audio/voices#operation-create_voice_v1_audio_voices_post). For a preset voice, it's a mono, 16-bit, 44.1 kHz WAV file. Listen to it to hear a voice before you use it with [Generate speech](https://docs.mistral.ai/api/endpoint/audio/speech#operation-speech_v1_audio_speech_post).
+
+        To get the voice's details instead, call [Get a voice](https://docs.mistral.ai/api/endpoint/audio/voices#operation-get_voice_v1_audio_voices_voice_id_get).
       tags:
         - audio.voices
       parameters:
         - name: voice_id
           in: path
+          description: The voice's `id`. For a preset, you can pass its `slug` instead.
           required: true
           schema:
             type: string
             title: Voice Id
+            description: The voice's `id`. For a preset, you can pass its `slug` instead.
+            examples:
+              - en_paul_neutral
+              - c69964a6-ab8b-4f8a-9465-ec0925096ec8
       responses:
         '200':
-          description: Successful Response
+          description: The audio sample's bytes.
           content:
             audio/wav:
               schema:
@@ -14196,6 +14534,14 @@ components:
     SpeechOutputFormat:
       type: string
       title: SpeechOutputFormat
+      description: |-
+        The audio format of generated speech.
+
+        - `mp3`: compressed. The default.
+        - `wav`: a WAV file of mono 16-bit PCM at 24 kHz.
+        - `pcm`: raw mono 32-bit float samples, little-endian, at 24 kHz, with no file header. Streaming with `pcm` gives the lowest time to first audio.
+        - `flac`: lossless compression.
+        - `opus`: compressed at a low bitrate, for streaming.
       enum:
         - pcm
         - wav
@@ -14204,49 +14550,90 @@ components:
         - opus
     SpeechRequest:
       type: object
+      description: The body of a [Generate speech](https://docs.mistral.ai/api/endpoint/audio/speech#operation-speech_v1_audio_speech_post) request. Set `model` and `input`, and set either `voice_id` or `ref_audio`.
       properties:
         model:
-          anyOf:
-            - type: string
-            - type: 'null'
+          type: string
           title: Model
+          description: |-
+            The model to use: `voxtral-mini-tts-2603`, or its alias `voxtral-mini-tts-latest`. A request without a model returns `422` with the message `No model provided for speech.`
+          examples:
+            - voxtral-mini-tts-2603
+            - voxtral-mini-tts-latest
         metadata:
           anyOf:
             - $ref: '#/components/schemas/MetadataDict'
             - type: 'null'
+          description: An object with any keys and values. The speech response doesn't include it.
+          examples:
+            - project: spec-demo
         stream:
           type: boolean
           title: Stream
           default: false
+          description: |-
+            Set to `true` to receive the audio as server-sent events while it's generated. Set to `false` to receive one JSON response when the whole clip is ready. Defaults to `false`.
+          examples:
+            - true
         prompt_cache_key:
           anyOf:
             - type: string
             - type: 'null'
           title: Prompt Cache Key
+          description: A string key. The API accepts it on speech requests. The speech response doesn't include it.
+          examples:
+            - spec-demo
         voice_id:
           anyOf:
             - type: string
             - type: 'null'
           title: Voice Id
-          description: The preset or custom voice to use for generating the speech.
+          description: |-
+            The voice to speak with: a preset voice or one of your custom voices. Pass the voice's `id`, which is a UUID. For a preset, you can pass its `slug` instead, such as `en_paul_neutral`. To find a preset, call [List voices](https://docs.mistral.ai/api/endpoint/audio/voices#operation-list_voices_v1_audio_voices_get) with `type=preset`. To save a custom voice, call [Create a voice](https://docs.mistral.ai/api/endpoint/audio/voices#operation-create_voice_v1_audio_voices_post).
+
+            Set either `voice_id` or `ref_audio`. A request with neither returns `400`.
+          examples:
+            - en_paul_neutral
+            - c69964a6-ab8b-4f8a-9465-ec0925096ec8
         ref_audio:
           anyOf:
             - type: string
-            - type: string
+              contentEncoding: base64
               contentMediaType: application/octet-stream
             - type: 'null'
           title: Ref Audio
-          description: The audio reference for generating the speech.
+          description: |-
+            A recording of the voice to clone, as a base64-encoded audio file, such as WAV or MP3. The API clones the voice for this request only. To reuse a voice across requests, save it with [Create a voice](https://docs.mistral.ai/api/endpoint/audio/voices#operation-create_voice_v1_audio_voices_post) and pass `voice_id` instead.
+
+            The [speech generation guide](https://docs.mistral.ai/studio/audio/text_to_speech/speech) recommends 3 to 25 seconds of clean audio from a single speaker, with no background noise. Reference audio doesn't count toward the input-characters rate limit.
+
+            Set either `voice_id` or `ref_audio`. The example is truncated.
+          examples:
+            - UklGRvIkCwBXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAA...
         input:
           type: string
           title: Input
-          description: Text to generate a speech from
+          description: |-
+            The text to speak. Write it the way it should be read aloud:
+
+            - Spell out numbers and symbols, for example `twelve thirty four` instead of `1234`.
+            - Spell out abbreviations, for example `F-B-I` instead of `FBI`.
+            - Leave out Markdown, emoji, and other special characters.
+            - For the most natural result, write in the voice's language. Text in another language comes out with the voice's accent.
+
+            The guide recommends under 300 words per request for best results. Each character counts toward your per-minute input-characters rate limit. Text that fails content moderation returns `403`.
+          examples:
+            - Your order has shipped and should arrive on Thursday.
         response_format:
           $ref: '#/components/schemas/SpeechOutputFormat'
-          description: Output audio format. Defaults to mp3.
+          description: |-
+            The audio format of the output. Defaults to `mp3`. See `SpeechOutputFormat` for each format's encoding. For the lowest time to first audio, use `pcm` with `stream` set to `true`.
           default: mp3
+          examples:
+            - wav
       title: SpeechRequest
       required:
+        - model
         - input
       additionalProperties: true
     ValidationError:
@@ -23333,27 +23720,36 @@ components:
         name:
           type: string
           title: Name
+          description: The voice's display name.
         slug:
           anyOf:
             - type: string
             - type: 'null'
           title: Slug
+          description: A short, URL-friendly identifier for the voice.
         languages:
           type: array
           items:
             type: string
           title: Languages
           default: []
+          description: The languages the voice speaks, as a list of language codes. Preset voices use regional codes such as `en_us`, `en_gb`, and `fr_fr`. Defaults to an empty list.
+          examples:
+            - - en_us
         gender:
           anyOf:
             - type: string
             - type: 'null'
           title: Gender
+          description: The speaker's gender, such as `female` or `male`.
+          examples:
+            - male
         age:
           anyOf:
             - type: integer
             - type: 'null'
           title: Age
+          description: The speaker's approximate age, in years.
         tags:
           anyOf:
             - type: array
@@ -23361,39 +23757,54 @@ components:
                 type: string
             - type: 'null'
           title: Tags
+          description: Free-form tags that describe the voice, such as its tone.
+          examples:
+            - - relaxed
+              - balanced
+              - neutral
         color:
           anyOf:
             - type: string
             - type: 'null'
           title: Color
+          description: A color for the voice. Preset voices use hex codes such as `#77778B`.
+          examples:
+            - '#77778B'
         description:
           anyOf:
             - type: string
               maxLength: 500
             - type: 'null'
           title: Description
+          description: A description of the voice, up to 500 characters.
         retention_notice:
           type: integer
           title: Retention Notice
           maximum: 365
           minimum: 1
           default: 30
+          description: An integer from 1 to 365. Defaults to 30. Preset voices have 30.
+          examples:
+            - 30
         sample_audio:
           type: string
           title: Sample Audio
           contentMediaType: application/octet-stream
-          description: Base64-encoded audio file
+          contentEncoding: base64
+          description: The recording to clone, as a base64-encoded audio file. For reference audio, the [speech generation guide](https://docs.mistral.ai/studio/audio/text_to_speech/speech) recommends 3 to 25 seconds of clean audio from a single speaker. To download the recording later, call [Get a voice's audio sample](https://docs.mistral.ai/api/endpoint/audio/voices#operation-get_voice_sample_audio_v1_audio_voices_voice_id_sample_get). The example is truncated.
+          examples:
+            - UklGRvIkCwBXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAA...
         sample_filename:
           anyOf:
             - type: string
             - type: 'null'
           title: Sample Filename
-          description: Original filename for extension detection
+          description: The recording's original file name. The API uses its extension to detect the audio format.
       title: VoiceCreateRequest
       required:
         - name
         - sample_audio
-      description: Request model for creating a new voice with base64 audio.
+      description: The body of a [Create a voice](https://docs.mistral.ai/api/endpoint/audio/voices#operation-create_voice_v1_audio_voices_post) request. `name` and `sample_audio` are required.
     VoiceListResponse:
       type: object
       properties:
@@ -23402,18 +23813,31 @@ components:
           items:
             $ref: '#/components/schemas/VoiceResponse'
           title: Items
+          description: The voices on this page.
         total:
           type: integer
           title: Total
+          description: The number of voices that match `type`, across all pages.
+          examples:
+            - 30
         page:
           type: integer
           title: Page
+          description: This page's number, starting at 1.
+          examples:
+            - 1
         page_size:
           type: integer
           title: Page Size
+          description: 'The `limit` for this request: the most voices a page can hold.'
+          examples:
+            - 2
         total_pages:
           type: integer
           title: Total Pages
+          description: The number of pages at this `limit`.
+          examples:
+            - 15
       title: VoiceListResponse
       required:
         - items
@@ -23421,34 +23845,49 @@ components:
         - page
         - page_size
         - total_pages
-      description: Schema for voice list response
+      description: One page of voices from [List voices](https://docs.mistral.ai/api/endpoint/audio/voices#operation-list_voices_v1_audio_voices_get).
     VoiceResponse:
       type: object
       properties:
         name:
           type: string
           title: Name
+          description: The voice's display name.
+          examples:
+            - Paul - Neutral
         slug:
           anyOf:
             - type: string
             - type: 'null'
           title: Slug
+          description: A short identifier. For a preset, you can pass it as `voice_id` instead of `id` to [Generate speech](https://docs.mistral.ai/api/endpoint/audio/speech#operation-speech_v1_audio_speech_post), [Get a voice](https://docs.mistral.ai/api/endpoint/audio/voices#operation-get_voice_v1_audio_voices_voice_id_get), and [Get a voice's audio sample](https://docs.mistral.ai/api/endpoint/audio/voices#operation-get_voice_sample_audio_v1_audio_voices_voice_id_sample_get).
+          examples:
+            - en_paul_neutral
         languages:
           type: array
           items:
             type: string
           title: Languages
           default: []
+          description: The languages the voice speaks, as language codes.
+          examples:
+            - - en_us
         gender:
           anyOf:
             - type: string
             - type: 'null'
           title: Gender
+          description: The speaker's gender.
+          examples:
+            - male
         age:
           anyOf:
             - type: integer
             - type: 'null'
           title: Age
+          description: The speaker's approximate age, in years.
+          examples:
+            - 30
         tags:
           anyOf:
             - type: array
@@ -23456,39 +23895,67 @@ components:
                 type: string
             - type: 'null'
           title: Tags
+          description: Free-form tags that describe the voice.
+          examples:
+            - - relaxed
+              - balanced
+              - neutral
         color:
           anyOf:
             - type: string
             - type: 'null'
           title: Color
+          description: A color for the voice. Preset voices use hex codes.
+          examples:
+            - '#77778B'
         description:
           anyOf:
             - type: string
               maxLength: 500
             - type: 'null'
           title: Description
+          description: The voice's description, up to 500 characters, or `null` if it has none.
         retention_notice:
           type: integer
           title: Retention Notice
           default: 30
+          description: An integer. Preset voices have 30. [Create a voice](https://docs.mistral.ai/api/endpoint/audio/voices#operation-create_voice_v1_audio_voices_post) accepts a `retention_notice` from 1 to 365.
+          examples:
+            - 30
         id:
           type: string
           title: Id
           format: uuid
+          description: The voice's unique ID, a UUID. Pass it as `voice_id` to [Generate speech](https://docs.mistral.ai/api/endpoint/audio/speech#operation-speech_v1_audio_speech_post) and to the other voice operations.
+          examples:
+            - c69964a6-ab8b-4f8a-9465-ec0925096ec8
         created_at:
           type: string
           title: Created At
           format: date-time
+          description: When the voice was created, in UTC.
+          examples:
+            - '2026-03-24T15:31:20.081769Z'
         user_id:
           anyOf:
             - type: string
             - type: 'null'
           title: User Id
+          description: A user ID. Preset voices have `null`.
         trimmed_seconds:
           anyOf:
             - type: number
             - type: 'null'
           title: Trimmed Seconds
+          description: A number of seconds. Preset voices have `null`.
+        appearance:
+          description: Preset voices have `null`.
+        sharing_scope:
+          type: string
+          title: Sharing Scope
+          description: Preset voices have `global`.
+          examples:
+            - global
         type:
           type: string
           title: Type
@@ -23496,6 +23963,9 @@ components:
             - preset
             - custom
           readOnly: true
+          description: '`preset` for Mistral''s preset voices, or `custom` for voices created with [Create a voice](https://docs.mistral.ai/api/endpoint/audio/voices#operation-create_voice_v1_audio_voices_post).'
+          examples:
+            - preset
       title: VoiceResponse
       required:
         - name
@@ -23503,7 +23973,7 @@ components:
         - created_at
         - user_id
         - type
-      description: Schema for voice response
+      description: 'A voice: one of Mistral''s preset voices or one of your custom voices. Pass its `id`, or a preset''s `slug`, as `voice_id` to [Generate speech](https://docs.mistral.ai/api/endpoint/audio/speech#operation-speech_v1_audio_speech_post).'
     VoiceUpdateRequest:
       type: object
       properties:
@@ -23512,6 +23982,7 @@ components:
             - type: string
             - type: 'null'
           title: Name
+          description: The voice's new display name.
         languages:
           anyOf:
             - type: array
@@ -23519,16 +23990,23 @@ components:
                 type: string
             - type: 'null'
           title: Languages
+          description: The languages the voice speaks, as a list of language codes. Preset voices use regional codes such as `en_us`.
+          examples:
+            - - en_us
         gender:
           anyOf:
             - type: string
             - type: 'null'
           title: Gender
+          description: The speaker's gender, such as `female` or `male`.
+          examples:
+            - male
         age:
           anyOf:
             - type: integer
             - type: 'null'
           title: Age
+          description: The speaker's approximate age, in years.
         tags:
           anyOf:
             - type: array
@@ -23536,14 +24014,20 @@ components:
                 type: string
             - type: 'null'
           title: Tags
+          description: Free-form tags that describe the voice.
+          examples:
+            - - relaxed
+              - balanced
+              - neutral
         description:
           anyOf:
             - type: string
               maxLength: 500
             - type: 'null'
           title: Description
+          description: A description of the voice, up to 500 characters.
       title: VoiceUpdateRequest
-      description: Request model for partially updating voice metadata.
+      description: The body of an [Update a voice](https://docs.mistral.ai/api/endpoint/audio/voices#operation-update_voice_v1_audio_voices_voice_id_patch) request. Send only the fields you want to change. The others keep their current values.
     ActivityTaskCompletedResponse:
       type: object
       properties:
