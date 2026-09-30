@@ -1025,7 +1025,7 @@ paths:
                         prompt_token_details: null
         '400':
           description: |-
-            Bad request. For example, the request has neither `voice_id` nor `ref_audio`.
+            Bad request. For example, the request has neither `voice_id` nor `ref_audio`, or `ref_audio` is longer than 60 seconds or isn't a readable audio file.
           content:
             application/json:
               schema:
@@ -1040,9 +1040,44 @@ paths:
                     param: null
                     code: null
                     raw_status_code: 400
+                refAudioTooLong:
+                  summary: Reference audio over 60 seconds
+                  value:
+                    object: error
+                    message: Reference audio duration 60.50s exceeds the maximum allowed duration of 60.0s
+                    type: invalid_request_invalid_args
+                    param: null
+                    code: '3051'
+                    raw_status_code: 400
+                refAudioUnreadable:
+                  summary: Reference audio in a format the API can't read
+                  value:
+                    object: error
+                    message: Failed to load audio file. Verify that the given file is valid mp3 or wav.
+                    type: invalid_request_audio
+                    param: null
+                    code: '3291'
+                    raw_status_code: 400
         '403':
           description: |-
             The `input` text failed content moderation. Change the text and try again.
+        '429':
+          description: |-
+            The request would go over your per-minute limit on `input` characters. The `x-ratelimit-limit-input-characters-minute` and `x-ratelimit-remaining-input-characters-minute` headers show the limit and what's left. Wait and try again, or send shorter `input`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                rateLimited:
+                  summary: Over the per-minute character limit
+                  value:
+                    object: error
+                    message: Rate limit exceeded
+                    type: rate_limited
+                    param: null
+                    code: '1300'
+                    raw_status_code: 429
         '422':
           description: |-
             The request is invalid. A request without `model`, or with `model` set to `null`, returns the error object shown in the `missingModel` example.
@@ -1074,7 +1109,7 @@ paths:
 
         With `stream` set to `false`, the default, you get one JSON response when the whole clip is ready. Decode its `audio_data` from base64 to get the audio file. With `stream` set to `true`, you get server-sent events as the audio is generated: `speech.audio.delta` events that each carry a chunk, then one `speech.audio.done` event with the token usage. For the lowest time to first audio, stream with `response_format` set to `pcm`.
 
-        The `input` text counts toward a per-minute limit on input characters. Reference audio doesn't count. JSON responses report the limit in `x-ratelimit-*` headers. The API moderates `input` and rejects some text with `403`.
+        The `input` text counts toward a per-minute limit on input characters. Reference audio doesn't count. JSON responses report the limit in `x-ratelimit-*` headers. A request over the limit returns `429`. The API moderates `input` and rejects some text with `403`.
 
         For request examples in Python, TypeScript, and cURL, and for tips on writing `input`, see the [speech generation guide](https://docs.mistral.ai/studio/audio/text_to_speech/speech).
   /v1/models:
@@ -14587,7 +14622,7 @@ components:
             - type: 'null'
           title: Ref Audio
           description: |-
-            A recording of the voice to clone, as a base64-encoded audio file, such as WAV or MP3. The API clones the voice for this request only. To reuse a voice across requests, save it with [Create a voice](https://docs.mistral.ai/api/endpoint/audio/voices#operation-create_voice_v1_audio_voices_post) and pass `voice_id` instead.
+            A recording of the voice to clone, as a base64-encoded WAV or MP3 file, at most 60 seconds long. A longer recording, or one the API can't read, returns `400`. The API clones the voice for this request only. To reuse a voice across requests, save it with [Create a voice](https://docs.mistral.ai/api/endpoint/audio/voices#operation-create_voice_v1_audio_voices_post) and pass `voice_id` instead.
 
             The [speech generation guide](https://docs.mistral.ai/studio/audio/text_to_speech/speech) recommends 3 to 25 seconds of clean audio from a single speaker, with no background noise. Reference audio doesn't count toward the input-characters rate limit.
 
