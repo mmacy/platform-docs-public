@@ -940,13 +940,12 @@ paths:
                           - type: integer
                           - type: 'null'
                         title: Prompt Audio Seconds
-                        description: For speech, this is `null`.
                       prompt_tokens:
                         type: integer
                         title: Prompt Tokens
                         default: 0
                         description: |-
-                          The number of tokens the model read for this request. Reference audio in `ref_audio` adds about 12.5 tokens per second of audio.
+                          The number of input tokens the request used. Reference audio in `ref_audio` counts toward it.
                         examples:
                           - 120
                       total_tokens:
@@ -962,8 +961,6 @@ paths:
                           - type: 'null'
                         title: Completion Tokens
                         default: 0
-                        description: |-
-                          The number of audio samples generated. The output has 24,000 samples per second, so divide by 24,000 to get the clip's length in seconds.
                         examples:
                           - 61440
                       request_count:
@@ -971,34 +968,29 @@ paths:
                           - type: integer
                           - type: 'null'
                         title: Request Count
-                        description: For speech, this is `null`.
                       prompt_tokens_details:
                         anyOf:
                           - $ref: '#/paths/~1v1~1audio~1speech/post/responses/200/content/text~1event-stream/schema/$defs/PromptTokensDetails'
                           - type: 'null'
-                        description: For speech, this is `null`.
                       completion_tokens_details:
                         anyOf:
                           - $ref: '#/paths/~1v1~1audio~1speech/post/responses/200/content/text~1event-stream/schema/$defs/CompletionTokensDetails'
                           - type: 'null'
-                        description: For speech, this is `null`.
                       service_tier:
                         anyOf:
                           - type: string
                           - type: 'null'
                         title: Service Tier
-                        description: 'The service tier at which the request was processed: standard or priority. For speech, this is `null`.'
+                        description: 'The service tier at which the request was processed: standard or priority.'
                       prompt_token_details:
                         anyOf:
                           - $ref: '#/paths/~1v1~1audio~1speech/post/responses/200/content/text~1event-stream/schema/$defs/PromptTokensDetails'
                           - type: 'null'
-                        description: For speech, this is `null`.
                       num_cached_tokens:
                         anyOf:
                           - type: integer
                           - type: 'null'
                         title: Num Cached Tokens
-                        description: Speech responses leave this field out.
                     title: UsageInfo
                     description: Token usage for a speech request.
                     additionalProperties: false
@@ -1037,28 +1029,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  object:
-                    type: string
-                    description: Always `error`.
-                  message:
-                    type: string
-                    description: What went wrong.
-                  type:
-                    type: string
-                    description: The error type.
-                  param:
-                    anyOf:
-                      - type: string
-                      - type: 'null'
-                  code:
-                    anyOf:
-                      - type: string
-                      - type: 'null'
-                  raw_status_code:
-                    type: integer
-                    description: The HTTP status code.
+                $ref: '#/components/schemas/ErrorResponse'
               examples:
                 noVoice:
                   summary: No voice
@@ -1080,28 +1051,7 @@ paths:
               schema:
                 anyOf:
                   - $ref: '#/components/schemas/HTTPValidationError'
-                  - type: object
-                    properties:
-                      object:
-                        type: string
-                        description: Always `error`.
-                      message:
-                        type: string
-                        description: What went wrong.
-                      type:
-                        type: string
-                        description: The error type.
-                      param:
-                        anyOf:
-                          - type: string
-                          - type: 'null'
-                      code:
-                        anyOf:
-                          - type: string
-                          - type: 'null'
-                      raw_status_code:
-                        type: integer
-                        description: The HTTP status code.
+                  - $ref: '#/components/schemas/ErrorResponse'
               examples:
                 missingModel:
                   summary: No model
@@ -1113,7 +1063,7 @@ paths:
                     code: '1500'
                     raw_status_code: 422
       description: |-
-        Generates speech from text with Voxtral TTS. Set `model` to `voxtral-mini-tts-2603`, or to its alias `voxtral-mini-tts-latest`.
+        Generates speech from text with a Voxtral TTS model. Set `model` to the ID of a text-to-speech model. To find one, call [List models](https://docs.mistral.ai/api/endpoint/models#operation-list_models_v1_models_get) and look for models with `capabilities.audio_speech` set to `true`.
 
         Choose the voice in one of two ways:
 
@@ -8333,7 +8283,7 @@ paths:
       operationId: list_voices_v1_audio_voices_get
       summary: List voices
       description: |-
-        Lists preset voices and your custom voices, one page at a time. Use it to find a voice for [Generate speech](https://docs.mistral.ai/api/endpoint/audio/speech#operation-speech_v1_audio_speech_post): pass a voice's `id`, or a preset's `slug`, as `voice_id`. Preset voices cover the languages `en_us`, `en_gb`, and `fr_fr`.
+        Lists preset voices and your custom voices, one page at a time. Use it to find a voice for [Generate speech](https://docs.mistral.ai/api/endpoint/audio/speech#operation-speech_v1_audio_speech_post): pass a voice's `id`, or a preset's `slug`, as `voice_id`.
 
         To get the next page, add `limit` to `offset`. The response's `total` and `total_pages` tell you when to stop.
 
@@ -8502,7 +8452,7 @@ paths:
       operationId: delete_voice_v1_audio_voices__voice_id__delete
       summary: Delete a custom voice
       description: |-
-        Permanently deletes one of your custom voices. After you delete a voice, speech requests that use its `voice_id` fail. The response is the deleted voice.
+        Deletes one of your custom voices. The response is the deleted voice.
 
         To keep a voice and change its details instead, call [Update a voice](https://docs.mistral.ai/api/endpoint/audio/voices#operation-update_voice_v1_audio_voices_voice_id_patch).
       tags:
@@ -8631,7 +8581,7 @@ paths:
       operationId: get_voice_sample_audio_v1_audio_voices__voice_id__sample_get
       summary: Get a voice's audio sample
       description: |-
-        Downloads the recording that a voice was made from, as raw audio bytes. For a custom voice, it's the recording you sent to [Create a voice](https://docs.mistral.ai/api/endpoint/audio/voices#operation-create_voice_v1_audio_voices_post). For a preset voice, it's a mono, 16-bit, 44.1 kHz WAV file. Listen to it to hear a voice before you use it with [Generate speech](https://docs.mistral.ai/api/endpoint/audio/speech#operation-speech_v1_audio_speech_post).
+        Downloads a voice's audio sample, as raw audio bytes. For a custom voice, it's the sample stored when you created the voice with [Create a voice](https://docs.mistral.ai/api/endpoint/audio/voices#operation-create_voice_v1_audio_voices_post). Listen to it to hear a voice before you use it with [Generate speech](https://docs.mistral.ai/api/endpoint/audio/speech#operation-speech_v1_audio_speech_post).
 
         To get the voice's details instead, call [Get a voice](https://docs.mistral.ai/api/endpoint/audio/voices#operation-get_voice_v1_audio_voices_voice_id_get).
       tags:
@@ -14531,6 +14481,40 @@ components:
                 fine-tuned: '#/components/schemas/FTModelCard'
           title: Data
       title: ModelList
+    ErrorResponse:
+      type: object
+      title: ErrorResponse
+      description: The body of an error response in the API's own format. `message` says what went wrong. Some responses use `HTTPValidationError` instead; each operation's responses say which.
+      properties:
+        object:
+          type: string
+          description: Always `error`.
+          examples:
+            - error
+        message:
+          type: string
+          description: What went wrong, in words.
+          examples:
+            - Either ref_audio or voice must be provided.
+        type:
+          type: string
+          description: The kind of error, such as `invalid_request_error` or `invalid_model`.
+          examples:
+            - invalid_request_error
+        param:
+          anyOf:
+            - type: string
+            - type: 'null'
+        code:
+          anyOf:
+            - type: string
+            - type: 'null'
+          description: An error code as a string, such as `'1500'`, or `null`.
+        raw_status_code:
+          type: integer
+          description: The HTTP status code of the response.
+          examples:
+            - 400
     SpeechOutputFormat:
       type: string
       title: SpeechOutputFormat
@@ -14538,10 +14522,10 @@ components:
         The audio format of generated speech.
 
         - `mp3`: compressed. The default.
-        - `wav`: a WAV file of mono 16-bit PCM at 24 kHz.
-        - `pcm`: raw mono 32-bit float samples, little-endian, at 24 kHz, with no file header. Streaming with `pcm` gives the lowest time to first audio.
+        - `wav`: a WAV file of uncompressed PCM.
+        - `pcm`: raw 32-bit float samples, little-endian, mono, at 24 kHz, with no file header. Streaming with `pcm` gives the lowest time to first audio.
         - `flac`: lossless compression.
-        - `opus`: compressed at a low bitrate, for streaming.
+        - `opus`: compressed at a low bitrate. Suited to streaming.
       enum:
         - pcm
         - wav
@@ -14556,7 +14540,7 @@ components:
           type: string
           title: Model
           description: |-
-            The model to use: `voxtral-mini-tts-2603`, or its alias `voxtral-mini-tts-latest`. A request without a model returns `422` with the message `No model provided for speech.`
+            The ID of the text-to-speech model to use. To find one, call [List models](https://docs.mistral.ai/api/endpoint/models#operation-list_models_v1_models_get) and look for models with `capabilities.audio_speech` set to `true`. A request without a model returns `422` with the message `No model provided for speech.`
           examples:
             - voxtral-mini-tts-2603
             - voxtral-mini-tts-latest
@@ -23726,7 +23710,7 @@ components:
             - type: string
             - type: 'null'
           title: Slug
-          description: A short, URL-friendly identifier for the voice.
+          description: An identifier for the voice, in addition to its `id`.
         languages:
           type: array
           items:
